@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReFit Note量産マシン</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif; background: #f5f5f5; color: #333; }
+
+/* Auth */
+#auth-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+.auth-box { background: #fff; border-radius: 16px; padding: 40px 32px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,.2); width: 90%; max-width: 360px; }
+.auth-box h1 { font-size: 20px; margin-bottom: 8px; color: #333; }
+.auth-box p { font-size: 13px; color: #888; margin-bottom: 24px; }
+.auth-box input { width: 100%; padding: 12px 16px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px; text-align: center; letter-spacing: 4px; transition: border-color .2s; }
+.auth-box input:focus { outline: none; border-color: #667eea; }
+.auth-box button { width: 100%; margin-top: 16px; padding: 12px; background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
+.auth-box .error { color: #e74c3c; font-size: 13px; margin-top: 12px; display: none; }
+
+/* App */
+#app { display: none; }
+.header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; padding: 16px 20px; position: sticky; top: 0; z-index: 100; }
+.header h1 { font-size: 18px; }
+
+/* Tabs */
+.tabs { display: flex; background: #fff; border-bottom: 2px solid #e0e0e0; position: sticky; top: 54px; z-index: 99; }
+.tab-btn { flex: 1; padding: 14px; text-align: center; font-size: 15px; font-weight: 600; color: #888; background: none; border: none; cursor: pointer; border-bottom: 3px solid transparent; transition: all .2s; }
+.tab-btn.active { color: #667eea; border-bottom-color: #667eea; }
+.tab-content { display: none; padding: 16px; max-width: 800px; margin: 0 auto; }
+.tab-content.active { display: block; }
+
+/* Common */
+.card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.card h3 { font-size: 15px; margin-bottom: 8px; color: #444; }
+.btn { padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity .2s; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; }
+.btn-danger { background: #e74c3c; color: #fff; }
+.btn-success { background: #27ae60; color: #fff; }
+.btn-secondary { background: #95a5a6; color: #fff; }
+.btn-sm { padding: 6px 12px; font-size: 12px; }
+.btn-xs { padding: 4px 8px; font-size: 11px; }
+input, textarea, select { width: 100%; padding: 10px 12px; border: 1.5px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; transition: border-color .2s; }
+input:focus, textarea:focus, select:focus { outline: none; border-color: #667eea; }
+textarea { resize: vertical; min-height: 60px; }
+label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-bottom: 4px; }
+.form-group { margin-bottom: 12px; }
+.inline-flex { display: flex; gap: 8px; align-items: center; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+.badge-pending { background: #ffeaa7; color: #856404; }
+.badge-approved { background: #d4edda; color: #155724; }
+.badge-refit { background: #dfe6e9; color: #636e72; }
+.text-muted { color: #999; font-size: 12px; }
+.text-center { text-align: center; }
+.mt-8 { margin-top: 8px; }
+.mt-16 { margin-top: 16px; }
+.mb-8 { margin-bottom: 8px; }
+.mb-16 { margin-bottom: 16px; }
+
+/* Loading */
+.spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid #ddd; border-top-color: #667eea; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.4); z-index: 1000; align-items: center; justify-content: center; flex-direction: column; color: #fff; }
+.loading-overlay.show { display: flex; }
+.loading-overlay .spinner { width: 40px; height: 40px; border-width: 4px; border-color: rgba(255,255,255,.3); border-top-color: #fff; }
+.loading-overlay p { margin-top: 16px; font-size: 15px; }
+
+/* Modal */
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.5); z-index: 500; align-items: flex-end; justify-content: center; }
+.modal-overlay.show { display: flex; }
+.modal { background: #fff; width: 100%; max-width: 600px; max-height: 90vh; border-radius: 16px 16px 0 0; overflow-y: auto; padding: 24px 20px; }
+.modal h2 { font-size: 18px; margin-bottom: 16px; }
+.modal-close { float: right; background: none; border: none; font-size: 24px; cursor: pointer; color: #999; }
+
+/* Knowledge list */
+.knowledge-item { border-bottom: 1px solid #eee; padding: 12px 0; }
+.knowledge-item:last-child { border-bottom: none; }
+.knowledge-title { font-weight: 600; font-size: 14px; color: #333; }
+.knowledge-meta { font-size: 12px; color: #888; margin-top: 4px; }
+.knowledge-url { font-size: 12px; color: #667eea; word-break: break-all; }
+
+/* Collapsible */
+.collapsible-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; padding: 12px 0; }
+.collapsible-header h3 { margin: 0; }
+.collapsible-body { display: none; }
+.collapsible-body.open { display: block; }
+.chevron { transition: transform .2s; font-size: 18px; color: #888; }
+.chevron.open { transform: rotate(180deg); }
+
+/* Customer list */
+.customer-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+.customer-item:last-child { border-bottom: none; }
+.customer-info { flex: 1; }
+.customer-name { font-weight: 600; font-size: 14px; }
+.customer-progress { font-size: 12px; color: #888; }
+
+/* Article list */
+.article-item { padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+.article-item:last-child { border-bottom: none; }
+.article-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.article-title { font-weight: 600; font-size: 14px; flex: 1; }
+.article-meta { font-size: 12px; color: #888; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.article-actions { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+
+/* Filter */
+.filter-bar { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.filter-btn { padding: 6px 14px; border-radius: 20px; border: 1.5px solid #ddd; background: #fff; font-size: 13px; cursor: pointer; transition: all .2s; }
+.filter-btn.active { border-color: #667eea; background: #667eea; color: #fff; }
+
+/* Article body in modal */
+.article-body { white-space: pre-wrap; font-size: 14px; line-height: 1.8; padding: 16px 0; }
+.copy-btn { position: sticky; top: 0; }
+
+/* Toast */
+.toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 24px; border-radius: 8px; font-size: 14px; z-index: 2000; opacity: 0; transition: opacity .3s; pointer-events: none; }
+.toast.show { opacity: 1; }
+
+@media (min-width: 600px) {
+  .modal-overlay { align-items: center; }
+  .modal { border-radius: 16px; max-height: 80vh; }
+}
+</style>
+</head>
+<body>
+
+<!-- Auth Screen -->
+<div id="auth-screen">
+  <div class="auth-box">
+    <h1>ReFit Note量産マシン</h1>
+    <p>パスワードを入力してください</p>
+    <input type="password" id="password-input" placeholder="パスワード" maxlength="20">
+    <button onclick="authenticate()">ログイン</button>
+    <div class="error" id="auth-error">パスワードが違います</div>
+  </div>
+</div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <p id="loading-text">処理中...</p>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Main App -->
+<div id="app">
+  <div class="header"><h1>ReFit Note量産マシン</h1></div>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('research')">リサーチ</button>
+    <button class="tab-btn" onclick="switchTab('articles')">記事生成</button>
+  </div>
+
+  <!-- Tab 1: Research -->
+  <div class="tab-content active" id="tab-research">
+    <div class="card">
+      <h3>いいね閾値設定</h3>
+      <div class="inline-flex mt-8">
+        <input type="number" id="threshold-input" value="100" min="0" style="flex:1;">
+        <button class="btn btn-primary btn-sm" onclick="saveThreshold()">保存</button>
+      </div>
+    </div>
+
+    <div class="text-center mb-16">
+      <button class="btn btn-primary" onclick="runResearch()" id="research-btn">リサーチ実行</button>
+    </div>
+
+    <div class="card">
+      <h3>ナレッジ一覧</h3>
+      <div id="knowledge-list"><p class="text-muted text-center mt-8">ナレッジはまだありません</p></div>
+    </div>
+  </div>
+
+  <!-- Tab 2: Articles -->
+  <div class="tab-content" id="tab-articles">
+    <!-- Customer Management -->
+    <div class="card">
+      <div class="collapsible-header" onclick="toggleCollapsible(this)">
+        <h3>顧客管理</h3>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="collapsible-body">
+        <button class="btn btn-primary btn-sm mb-8" onclick="openCustomerModal()">顧客を追加</button>
+        <div id="customer-list"><p class="text-muted">顧客はまだ登録されていません</p></div>
+      </div>
+    </div>
+
+    <!-- Article Generation -->
+    <div class="card">
+      <h3>記事生成</h3>
+      <div class="form-group mt-8">
+        <label>顧客選択</label>
+        <select id="customer-select"><option value="">顧客を選択してください</option></select>
+      </div>
+      <div class="form-group">
+        <label>追記（任意）：今回特に触れたいこと</label>
+        <textarea id="additional-notes" rows="3" placeholder="例：最近始めた朝活について触れてほしい"></textarea>
+      </div>
+      <button class="btn btn-primary" onclick="generateArticle()" id="generate-btn">生成する</button>
+    </div>
+
+    <!-- Article List -->
+    <div class="card">
+      <h3>記事一覧</h3>
+      <div class="filter-bar mt-8">
+        <button class="filter-btn active" onclick="filterArticles('all', this)">全件</button>
+        <button class="filter-btn" onclick="filterArticles('pending', this)">承認待ち</button>
+        <button class="filter-btn" onclick="filterArticles('approved', this)">承認済み</button>
+      </div>
+      <div id="article-list"><p class="text-muted text-center">記事はまだありません</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- Customer Modal -->
+<div class="modal-overlay" id="customer-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeCustomerModal()">&times;</button>
+    <h2 id="customer-modal-title">顧客を追加</h2>
+    <input type="hidden" id="customer-edit-id">
+    <div class="form-group"><label>ニックネーム *</label><input type="text" id="c-nickname" placeholder="例：みかん"></div>
+    <div class="form-group"><label>年代</label><input type="text" id="c-age" placeholder="例：30代後半"></div>
+    <div class="form-group"><label>職業・ライフスタイル</label><textarea id="c-job" rows="2" placeholder="例：事務職、週5勤務"></textarea></div>
+    <div class="form-group"><label>ダイエットの悩み・コンプレックス</label><textarea id="c-diet" rows="2" placeholder="例：産後太りが戻らない"></textarea></div>
+    <div class="form-group"><label>開始時の状態（体重・体型）</label><textarea id="c-initial" rows="2" placeholder="例：身長158cm、体重65kg"></textarea></div>
+    <div class="form-group"><label>現在の状態（成果）</label><textarea id="c-current" rows="2" placeholder="例：-8kg達成、ウエスト-10cm"></textarea></div>
+    <div class="form-group"><label>性格・文体のイメージ</label><textarea id="c-personality" rows="2" placeholder="例：明るくてポジティブ、友達に話すような口調"></textarea></div>
+    <div class="form-group"><label>生活環境（家族構成・勤務形態）</label><textarea id="c-living" rows="2" placeholder="例：夫と子供2人、在宅勤務"></textarea></div>
+    <div class="form-group"><label>ReFitを知ったきっかけ</label><textarea id="c-trigger" rows="2" placeholder="例：Instagramの広告で見て"></textarea></div>
+    <div class="form-group"><label>ReFit言及する記事番号（カンマ区切り）</label><input type="text" id="c-refit-numbers" placeholder="例：3,5,8"></div>
+    <button class="btn btn-primary mt-8" onclick="saveCustomer()" style="width:100%;">保存</button>
+  </div>
+</div>
+
+<!-- Article View Modal -->
+<div class="modal-overlay" id="article-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeArticleModal()">&times;</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h2 id="article-modal-title">記事全文</h2>
+      <button class="btn btn-secondary btn-sm copy-btn" onclick="copyArticle()">コピー</button>
+    </div>
+    <div class="article-body" id="article-modal-body"></div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let currentFilter = 'all';
+
+// --- Auth ---
+function authenticate() {
+  const pw = document.getElementById('password-input').value;
+  fetch(API + '/api/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: pw }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        document.getElementById('auth-screen').style.display = 'none';
+        document.getElementById('app').style.display = 'block';
+        loadAll();
+      } else {
+        const err = document.getElementById('auth-error');
+        err.style.display = 'block';
+        setTimeout(() => err.style.display = 'none', 3000);
+      }
+    })
+    .catch(() => {
+      const err = document.getElementById('auth-error');
+      err.textContent = '通信エラーが発生しました';
+      err.style.display = 'block';
+    });
+}
+
+document.getElementById('password-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') authenticate();
+});
+
+// --- Tabs ---
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + (tab === 'research' ? 'research' : 'articles')).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// --- Loading ---
+function showLoading(text) {
+  document.getElementById('loading-text').textContent = text || '処理中...';
+  document.getElementById('loading').classList.add('show');
+}
+function hideLoading() { document.getElementById('loading').classList.remove('show'); }
+
+// --- Toast ---
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// --- Collapsible ---
+function toggleCollapsible(header) {
+  const body = header.nextElementSibling;
+  const chevron = header.querySelector('.chevron');
+  body.classList.toggle('open');
+  chevron.classList.toggle('open');
+}
+
+// --- Load All ---
+function loadAll() {
+  loadThreshold();
+  loadKnowledge();
+  loadCustomers();
+  loadArticles();
+}
+
+// --- Settings ---
+function loadThreshold() {
+  fetch(API + '/api/settings/like_threshold')
+    .then(r => r.json())
+    .then(data => {
+      if (data.value) document.getElementById('threshold-input').value = data.value;
+    });
+}
+
+function saveThreshold() {
+  const val = document.getElementById('threshold-input').value;
+  fetch(API + '/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'like_threshold', value: val }),
+  })
+    .then(r => r.json())
+    .then(() => showToast('閾値を保存しました'));
+}
+
+// --- Research ---
+function runResearch() {
+  const btn = document.getElementById('research-btn');
+  btn.disabled = true;
+  showLoading('リサーチ中... (1〜2分かかります)');
+  fetch(API + '/api/research', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      hideLoading();
+      btn.disabled = false;
+      if (data.error) {
+        showToast('エラー: ' + data.error);
+        return;
+      }
+      showToast(`${data.savedCount}件のナレッジを保存しました`);
+      loadKnowledge();
+    })
+    .catch(err => {
+      hideLoading();
+      btn.disabled = false;
+      showToast('エラーが発生しました');
+    });
+}
+
+// --- Knowledge ---
+function loadKnowledge() {
+  fetch(API + '/api/knowledge')
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('knowledge-list');
+      if (data.length === 0) {
+        el.innerHTML = '<p class="text-muted text-center mt-8">ナレッジはまだありません</p>';
+        return;
+      }
+      el.innerHTML = data.map(k => `
+        <div class="knowledge-item">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div style="flex:1;">
+              <div class="knowledge-title">${esc(k.article_title)}</div>
+              <div class="knowledge-meta">いいね推定: ${k.likes_estimate} | キーワード: ${esc(k.keywords || '')}</div>
+              ${k.source_url ? `<a href="${esc(k.source_url)}" target="_blank" class="knowledge-url">${esc(k.source_url)}</a>` : ''}
+              <div class="text-muted">${formatDate(k.created_at)}</div>
+            </div>
+            <button class="btn btn-danger btn-xs" onclick="deleteKnowledge(${k.id})">削除</button>
+          </div>
+        </div>
+      `).join('');
+    });
+}
+
+function deleteKnowledge(id) {
+  if (!confirm('このナレッジを削除しますか？')) return;
+  fetch(API + '/api/knowledge/' + id, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(() => { showToast('削除しました'); loadKnowledge(); });
+}
+
+// --- Customers ---
+function loadCustomers() {
+  fetch(API + '/api/customers')
+    .then(r => r.json())
+    .then(data => {
+      // List
+      const el = document.getElementById('customer-list');
+      if (data.length === 0) {
+        el.innerHTML = '<p class="text-muted">顧客はまだ登録されていません</p>';
+      } else {
+        el.innerHTML = data.map(c => `
+          <div class="customer-item">
+            <div class="customer-info">
+              <div class="customer-name">${esc(c.nickname)}</div>
+              <div class="customer-progress">${c.post_count}本生成済み | ReFit: ${esc(c.refit_post_numbers || '未設定')}本目</div>
+            </div>
+            <div style="display:flex;gap:4px;">
+              <button class="btn btn-secondary btn-xs" onclick="editCustomer(${c.id})">編集</button>
+              <button class="btn btn-danger btn-xs" onclick="deleteCustomer(${c.id})">削除</button>
+            </div>
+          </div>
+        `).join('');
+      }
+      // Select
+      const sel = document.getElementById('customer-select');
+      sel.innerHTML = '<option value="">顧客を選択してください</option>' +
+        data.map(c => `<option value="${c.id}">${esc(c.nickname)} (${c.post_count}本済)</option>`).join('');
+    });
+}
+
+function openCustomerModal(data) {
+  document.getElementById('customer-modal-title').textContent = data ? '顧客を編集' : '顧客を追加';
+  document.getElementById('customer-edit-id').value = data ? data.id : '';
+  document.getElementById('c-nickname').value = data ? data.nickname : '';
+  document.getElementById('c-age').value = data ? (data.age_group || '') : '';
+  document.getElementById('c-job').value = data ? (data.job_lifestyle || '') : '';
+  document.getElementById('c-diet').value = data ? (data.diet_concerns || '') : '';
+  document.getElementById('c-initial').value = data ? (data.initial_status || '') : '';
+  document.getElementById('c-current').value = data ? (data.current_status || '') : '';
+  document.getElementById('c-personality').value = data ? (data.personality || '') : '';
+  document.getElementById('c-living').value = data ? (data.living_env || '') : '';
+  document.getElementById('c-trigger').value = data ? (data.refit_trigger || '') : '';
+  document.getElementById('c-refit-numbers').value = data ? (data.refit_post_numbers || '') : '';
+  document.getElementById('customer-modal').classList.add('show');
+}
+
+function closeCustomerModal() {
+  document.getElementById('customer-modal').classList.remove('show');
+}
+
+function editCustomer(id) {
+  fetch(API + '/api/customers')
+    .then(r => r.json())
+    .then(data => {
+      const c = data.find(x => x.id === id);
+      if (c) openCustomerModal(c);
+    });
+}
+
+function saveCustomer() {
+  const id = document.getElementById('customer-edit-id').value;
+  const body = {
+    nickname: document.getElementById('c-nickname').value,
+    age_group: document.getElementById('c-age').value,
+    job_lifestyle: document.getElementById('c-job').value,
+    diet_concerns: document.getElementById('c-diet').value,
+    initial_status: document.getElementById('c-initial').value,
+    current_status: document.getElementById('c-current').value,
+    personality: document.getElementById('c-personality').value,
+    living_env: document.getElementById('c-living').value,
+    refit_trigger: document.getElementById('c-trigger').value,
+    refit_post_numbers: document.getElementById('c-refit-numbers').value,
+  };
+  if (!body.nickname.trim()) { showToast('ニックネームを入力してください'); return; }
+  const url = id ? API + '/api/customers/' + id : API + '/api/customers';
+  const method = id ? 'PUT' : 'POST';
+  fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+    .then(r => r.json())
+    .then(() => {
+      closeCustomerModal();
+      showToast(id ? '更新しました' : '追加しました');
+      loadCustomers();
+    })
+    .catch(() => showToast('エラーが発生しました'));
+}
+
+function deleteCustomer(id) {
+  if (!confirm('この顧客と関連記事を削除しますか？')) return;
+  fetch(API + '/api/customers/' + id, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(() => { showToast('削除しました'); loadCustomers(); loadArticles(); });
+}
+
+// --- Articles ---
+function generateArticle() {
+  const customerId = document.getElementById('customer-select').value;
+  if (!customerId) { showToast('顧客を選択してください'); return; }
+  const notes = document.getElementById('additional-notes').value;
+  const btn = document.getElementById('generate-btn');
+  btn.disabled = true;
+  showLoading('記事を生成中... (30秒〜1分)');
+  fetch(API + '/api/articles/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_id: parseInt(customerId), additional_notes: notes }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      hideLoading();
+      btn.disabled = false;
+      if (data.error) { showToast('エラー: ' + data.error); return; }
+      showToast('記事を生成しました');
+      document.getElementById('additional-notes').value = '';
+      loadArticles();
+      loadCustomers();
+    })
+    .catch(err => {
+      hideLoading();
+      btn.disabled = false;
+      showToast('エラーが発生しました');
+    });
+}
+
+function loadArticles(status) {
+  const filter = status || currentFilter;
+  const query = filter !== 'all' ? '?status=' + filter : '';
+  fetch(API + '/api/articles' + query)
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('article-list');
+      if (data.length === 0) {
+        el.innerHTML = '<p class="text-muted text-center">記事はまだありません</p>';
+        return;
+      }
+      el.innerHTML = data.map((a, i) => `
+        <div class="article-item">
+          <div class="article-header">
+            <div class="article-title">${esc(a.title)}</div>
+          </div>
+          <div class="article-meta">
+            <span>${esc(a.nickname || '不明')}</span>
+            <span class="badge ${a.status === 'approved' ? 'badge-approved' : 'badge-pending'}">${a.status === 'approved' ? '承認済み' : '承認待ち'}</span>
+            ${a.refit_included ? '<span class="badge badge-refit">ReFit言及</span>' : ''}
+            <span>${formatDate(a.created_at)}</span>
+          </div>
+          <div class="article-actions">
+            <button class="btn btn-secondary btn-xs" onclick="viewArticle(${a.id})">全文表示</button>
+            ${a.status !== 'approved' ? `<button class="btn btn-success btn-xs" onclick="approveArticle(${a.id})">承認</button>` : ''}
+            <button class="btn btn-danger btn-xs" onclick="deleteArticle(${a.id})">削除</button>
+          </div>
+        </div>
+      `).join('');
+    });
+}
+
+function filterArticles(status, btn) {
+  currentFilter = status;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadArticles(status);
+}
+
+function viewArticle(id) {
+  fetch(API + '/api/articles')
+    .then(r => r.json())
+    .then(data => {
+      const a = data.find(x => x.id === id);
+      if (!a) return;
+      document.getElementById('article-modal-title').textContent = a.title;
+      document.getElementById('article-modal-body').textContent = a.body;
+      document.getElementById('article-modal').classList.add('show');
+    });
+}
+
+function closeArticleModal() {
+  document.getElementById('article-modal').classList.remove('show');
+}
+
+function copyArticle() {
+  const body = document.getElementById('article-modal-body').textContent;
+  navigator.clipboard.writeText(body).then(() => showToast('コピーしました'));
+}
+
+function approveArticle(id) {
+  if (!confirm('この記事を承認しますか？')) return;
+  fetch(API + '/api/articles/' + id + '/approve', { method: 'PUT' })
+    .then(r => r.json())
+    .then(() => { showToast('承認しました'); loadArticles(); });
+}
+
+function deleteArticle(id) {
+  if (!confirm('この記事を削除しますか？')) return;
+  fetch(API + '/api/articles/' + id, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(() => { showToast('削除しました'); loadArticles(); });
+}
+
+// --- Utility ---
+function esc(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function formatDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  return dt.toLocaleDateString('ja-JP') + ' ' + dt.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+}
+</script>
+</body>
+</html>

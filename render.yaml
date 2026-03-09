@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: refit-note-machine
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: refit-note-db
+          property: connectionString
+      - key: LINE_NOTIFY_TOKEN
+        sync: false
+      - key: PASSWORD
+        sync: false
+      - key: NODE_ENV
+        value: production
+
+databases:
+  - name: refit-note-db
+    plan: free
