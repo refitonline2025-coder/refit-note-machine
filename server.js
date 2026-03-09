@@ -25,6 +25,12 @@ app.use(express.static('public'));
 
 // --- DB Init ---
 async function initDB() {
+  // Drop broken tables from previous failed deploys (dependency order)
+  await pool.query(`DROP TABLE IF EXISTS articles`);
+  await pool.query(`DROP TABLE IF EXISTS customers`);
+  await pool.query(`DROP TABLE IF EXISTS knowledge`);
+  await pool.query(`DROP TABLE IF EXISTS settings`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS customers (
       id SERIAL PRIMARY KEY,
