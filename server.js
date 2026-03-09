@@ -25,14 +25,8 @@ app.use(express.static('public'));
 
 // --- DB Init ---
 async function initDB() {
-  // Drop broken tables from previous failed deploys (dependency order)
-  await pool.query(`DROP TABLE IF EXISTS articles`);
-  await pool.query(`DROP TABLE IF EXISTS customers`);
-  await pool.query(`DROP TABLE IF EXISTS knowledge`);
-  await pool.query(`DROP TABLE IF EXISTS settings`);
-
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS customers (
+    CREATE TABLE IF NOT EXISTS refit_customers (
       id SERIAL PRIMARY KEY,
       nickname TEXT NOT NULL,
       age_group TEXT,
@@ -50,7 +44,7 @@ async function initDB() {
   `);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS knowledge (
+    CREATE TABLE IF NOT EXISTS refit_knowledge (
       id SERIAL PRIMARY KEY,
       article_title TEXT,
       likes_estimate INTEGER,
@@ -63,16 +57,16 @@ async function initDB() {
   `);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS settings (
+    CREATE TABLE IF NOT EXISTS refit_settings (
       key TEXT PRIMARY KEY,
       value TEXT
     )
   `);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS articles (
+    CREATE TABLE IF NOT EXISTS refit_articles (
       id SERIAL PRIMARY KEY,
-      customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE,
+      customer_id INTEGER REFERENCES refit_customers(id) ON DELETE CASCADE,
       title TEXT,
       body TEXT,
       status TEXT DEFAULT 'pending',
@@ -82,7 +76,7 @@ async function initDB() {
   `);
 
   await pool.query(`
-    INSERT INTO settings (key, value) VALUES ('like_threshold', '100')
+    INSERT INTO refit_settings (key, value) VALUES ('like_threshold', '100')
     ON CONFLICT (key) DO NOTHING
   `);
 
@@ -101,7 +95,7 @@ app.post('/api/auth', (req, res) => {
 // --- Settings ---
 app.get('/api/settings/:key', async (req, res) => {
   try {
-    const result = await pool.query('SELECT value FROM settings WHERE key = $1', [req.params.key]);
+    const result = await pool.query('SELECT value FROM refit_settings WHERE key = $1', [req.params.key]);
     if (result.rows.length === 0) return res.json({ value: null });
     res.json({ value: result.rows[0].value });
   } catch (err) {
@@ -113,7 +107,7 @@ app.post('/api/settings', async (req, res) => {
   try {
     const { key, value } = req.body;
     await pool.query(
-      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+      'INSERT INTO refit_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
       [key, value]
     );
     res.json({ success: true });
@@ -125,7 +119,7 @@ app.post('/api/settings', async (req, res) => {
 // --- Knowledge ---
 app.get('/api/knowledge', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM knowledge ORDER BY created_at DESC');
+    const result = await pool.query('SELECT * FROM refit_knowledge ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -134,7 +128,7 @@ app.get('/api/knowledge', async (req, res) => {
 
 app.delete('/api/knowledge/:id', async (req, res) => {
   try {
-    await pool.query('DELETE FROM knowledge WHERE id = $1', [req.params.id]);
+    await pool.query('DELETE FROM refit_knowledge WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -144,7 +138,7 @@ app.delete('/api/knowledge/:id', async (req, res) => {
 // --- Research ---
 app.post('/api/research', async (req, res) => {
   try {
-    const thresholdResult = await pool.query("SELECT value FROM settings WHERE key = 'like_threshold'");
+    const thresholdResult = await pool.query("SELECT value FROM refit_settings WHERE key = 'like_threshold'");
     const threshold = thresholdResult.rows[0]?.value || '100';
 
     const systemPrompt = `あなたはNoteのダイエット・食事系記事のリサーチ専門家です。
@@ -208,7 +202,7 @@ cta_content（LINE誘導文やCTAの内容）, source_url
       const likesEstimate = parseInt(article.likes_estimate) || 0;
       if (likesEstimate >= parseInt(threshold)) {
         await pool.query(
-          `INSERT INTO knowledge (article_title, likes_estimate, structure_pattern, keywords, cta_content, source_url)
+          `INSERT INTO refit_knowledge (article_title, likes_estimate, structure_pattern, keywords, cta_content, source_url)
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [
             article.article_title || '',
@@ -233,7 +227,7 @@ cta_content（LINE誘導文やCTAの内容）, source_url
 // --- Customers ---
 app.get('/api/customers', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM customers ORDER BY created_at DESC');
+    const result = await pool.query('SELECT * FROM refit_customers ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -248,7 +242,7 @@ app.post('/api/customers', async (req, res) => {
       refit_trigger, refit_post_numbers,
     } = req.body;
     const result = await pool.query(
-      `INSERT INTO customers (nickname, age_group, job_lifestyle, diet_concerns,
+      `INSERT INTO refit_customers (nickname, age_group, job_lifestyle, diet_concerns,
         initial_status, current_status, personality, living_env,
         refit_trigger, refit_post_numbers)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
@@ -270,7 +264,7 @@ app.put('/api/customers/:id', async (req, res) => {
       refit_trigger, refit_post_numbers,
     } = req.body;
     const result = await pool.query(
-      `UPDATE customers SET nickname=$1, age_group=$2, job_lifestyle=$3, diet_concerns=$4,
+      `UPDATE refit_customers SET nickname=$1, age_group=$2, job_lifestyle=$3, diet_concerns=$4,
         initial_status=$5, current_status=$6, personality=$7, living_env=$8,
         refit_trigger=$9, refit_post_numbers=$10
        WHERE id=$11 RETURNING *`,
@@ -286,7 +280,7 @@ app.put('/api/customers/:id', async (req, res) => {
 
 app.delete('/api/customers/:id', async (req, res) => {
   try {
-    await pool.query('DELETE FROM customers WHERE id = $1', [req.params.id]);
+    await pool.query('DELETE FROM refit_customers WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -297,13 +291,13 @@ app.delete('/api/customers/:id', async (req, res) => {
 app.get('/api/articles', async (req, res) => {
   try {
     const { status } = req.query;
-    let query = `SELECT a.*, c.nickname FROM articles a
-                 LEFT JOIN customers c ON a.customer_id = c.id
+    let query = `SELECT a.*, c.nickname FROM refit_articles a
+                 LEFT JOIN refit_customers c ON a.customer_id = c.id
                  ORDER BY a.created_at DESC`;
     const params = [];
     if (status && status !== 'all') {
-      query = `SELECT a.*, c.nickname FROM articles a
-               LEFT JOIN customers c ON a.customer_id = c.id
+      query = `SELECT a.*, c.nickname FROM refit_articles a
+               LEFT JOIN refit_customers c ON a.customer_id = c.id
                WHERE a.status = $1
                ORDER BY a.created_at DESC`;
       params.push(status);
@@ -320,7 +314,7 @@ app.post('/api/articles/generate', async (req, res) => {
     const { customer_id, additional_notes } = req.body;
 
     // Get customer
-    const custResult = await pool.query('SELECT * FROM customers WHERE id = $1', [customer_id]);
+    const custResult = await pool.query('SELECT * FROM refit_customers WHERE id = $1', [customer_id]);
     if (custResult.rows.length === 0) {
       return res.status(404).json({ error: '顧客が見つかりません' });
     }
@@ -335,7 +329,7 @@ app.post('/api/articles/generate', async (req, res) => {
 
     // Get knowledge for context
     const knowledgeResult = await pool.query(
-      'SELECT article_title, structure_pattern, keywords, cta_content FROM knowledge ORDER BY created_at DESC LIMIT 10'
+      'SELECT article_title, structure_pattern, keywords, cta_content FROM refit_knowledge ORDER BY created_at DESC LIMIT 10'
     );
     const knowledgeSummary = knowledgeResult.rows.map(k =>
       `タイトル: ${k.article_title}\n構成: ${k.structure_pattern}\nキーワード: ${k.keywords}\nCTA: ${k.cta_content}`
@@ -402,13 +396,13 @@ ${additional_notes ? `【追記・今回特に触れたいこと】\n${additiona
 
     // Save article
     const articleResult = await pool.query(
-      `INSERT INTO articles (customer_id, title, body, status, refit_included)
+      `INSERT INTO refit_articles (customer_id, title, body, status, refit_included)
        VALUES ($1, $2, $3, 'pending', $4) RETURNING *`,
       [customer_id, title, articleText, includeRefit]
     );
 
     // Update post count
-    await pool.query('UPDATE customers SET post_count = $1 WHERE id = $2', [nextPostNumber, customer_id]);
+    await pool.query('UPDATE refit_customers SET post_count = $1 WHERE id = $2', [nextPostNumber, customer_id]);
 
     const article = articleResult.rows[0];
     article.nickname = customer.nickname;
@@ -424,7 +418,7 @@ ${additional_notes ? `【追記・今回特に触れたいこと】\n${additiona
 app.put('/api/articles/:id/approve', async (req, res) => {
   try {
     const result = await pool.query(
-      "UPDATE articles SET status = 'approved' WHERE id = $1 RETURNING *",
+      "UPDATE refit_articles SET status = 'approved' WHERE id = $1 RETURNING *",
       [req.params.id]
     );
     if (result.rows.length === 0) {
@@ -450,7 +444,7 @@ app.put('/api/articles/:id/approve', async (req, res) => {
 
 app.delete('/api/articles/:id', async (req, res) => {
   try {
-    await pool.query('DELETE FROM articles WHERE id = $1', [req.params.id]);
+    await pool.query('DELETE FROM refit_articles WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
