@@ -25,63 +25,62 @@ app.use(express.static('public'));
 
 // --- DB Init ---
 async function initDB() {
-  const client = await pool.connect();
-  try {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS customers (
-        id SERIAL PRIMARY KEY,
-        nickname TEXT NOT NULL,
-        age_group TEXT,
-        job_lifestyle TEXT,
-        diet_concerns TEXT,
-        initial_status TEXT,
-        current_status TEXT,
-        personality TEXT,
-        living_env TEXT,
-        refit_trigger TEXT,
-        refit_post_numbers TEXT DEFAULT '',
-        post_count INT DEFAULT 0,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS knowledge (
-        id SERIAL PRIMARY KEY,
-        article_title TEXT,
-        likes_estimate INT,
-        structure_pattern TEXT,
-        keywords TEXT,
-        cta_content TEXT,
-        source_url TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT
-      );
-    `);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS articles (
-        id SERIAL PRIMARY KEY,
-        customer_id INT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-        title TEXT,
-        body TEXT,
-        status TEXT DEFAULT 'draft',
-        refit_included BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-    // Default settings
-    await client.query(`
-      INSERT INTO settings (key, value) VALUES ('like_threshold', '100')
-      ON CONFLICT (key) DO NOTHING;
-    `);
-    console.log('Database initialized');
-  } finally {
-    client.release();
-  }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id SERIAL PRIMARY KEY,
+      nickname TEXT NOT NULL,
+      age_group TEXT,
+      job_lifestyle TEXT,
+      diet_concerns TEXT,
+      initial_status TEXT,
+      current_status TEXT,
+      personality TEXT,
+      living_env TEXT,
+      refit_trigger TEXT,
+      refit_post_numbers TEXT,
+      post_count INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS knowledge (
+      id SERIAL PRIMARY KEY,
+      article_title TEXT,
+      likes_estimate INTEGER,
+      structure_pattern TEXT,
+      keywords TEXT,
+      cta_content TEXT,
+      source_url TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS articles (
+      id SERIAL PRIMARY KEY,
+      customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE,
+      title TEXT,
+      body TEXT,
+      status TEXT DEFAULT 'pending',
+      refit_included BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    INSERT INTO settings (key, value) VALUES ('like_threshold', '100')
+    ON CONFLICT (key) DO NOTHING
+  `);
+
+  console.log('Database initialized');
 }
 
 // --- Auth ---
