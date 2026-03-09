@@ -45,17 +45,6 @@ async function initDB() {
       );
     `);
     await client.query(`
-      CREATE TABLE IF NOT EXISTS articles (
-        id SERIAL PRIMARY KEY,
-        customer_id INT REFERENCES customers(id) ON DELETE CASCADE,
-        title TEXT,
-        body TEXT,
-        status TEXT DEFAULT 'draft',
-        refit_included BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-    await client.query(`
       CREATE TABLE IF NOT EXISTS knowledge (
         id SERIAL PRIMARY KEY,
         article_title TEXT,
@@ -71,6 +60,17 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
+      );
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS articles (
+        id SERIAL PRIMARY KEY,
+        customer_id INT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        title TEXT,
+        body TEXT,
+        status TEXT DEFAULT 'draft',
+        refit_included BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT NOW()
       );
     `);
     // Default settings
