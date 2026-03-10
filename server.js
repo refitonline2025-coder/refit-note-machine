@@ -39,6 +39,7 @@ async function initDB() {
       refit_trigger TEXT,
       refit_post_numbers TEXT,
       post_count INTEGER DEFAULT 0,
+      themes TEXT,
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
@@ -74,6 +75,9 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
+
+  // Migrations for existing tables
+  await pool.query(`ALTER TABLE refit_customers ADD COLUMN IF NOT EXISTS themes TEXT`);
 
   await pool.query(`
     INSERT INTO refit_settings (key, value) VALUES ('like_threshold', '100')
@@ -142,13 +146,32 @@ app.post('/api/research', async (req, res) => {
     const threshold = thresholdResult.rows[0]?.value || '100';
 
     const systemPrompt = `あなたはNoteのダイエット・食事系記事のリサーチ専門家です。
-WebSearchを使い、現在Noteでバズっているダイエット・食事系の人気記事を
-10件以上調査してください。各記事について以下をJSON形式で返してください：
-article_title, likes_estimate（推定いいね数）, structure_pattern
-（見出し構成・文字数・導線の特徴）, keywords（配列）,
-cta_content（LINE誘導文やCTAの内容）, source_url
-閾値：${threshold}以上のもののみ含めること。
-必ずJSONの配列のみを返し、他のテキストは含めないこと。`;
+WebSearchを使い、以下のキーワードで必ずNote.com内の記事を検索してください。
+
+検索キーワード（全て試すこと）：
+- site:note.com ダイエット 体験談
+- site:note.com 食事制限 30代 女性
+- site:note.com 食事管理 痩せた
+- site:note.com オンライン食事指導
+- site:note.com ダイエット 成功 主婦
+
+各記事について以下をJSON配列形式で返してください：
+[{
+  "article_title": "記事タイトル",
+  "likes_estimate": いいね推定数（数値）,
+  "structure_pattern": "見出し構成・文字数・導線の特徴の説明",
+  "keywords": ["キーワード1", "キーワード2"],
+  "cta_content": "LINE誘導文やCTAの内容",
+  "source_url": "https://note.com/...の実際のURL"
+}]
+
+重要なルール：
+- 必ずNote.com（https://note.com/）のURLのみを返す
+- 実在する記事のURLのみ返す。存在が不確かなURLは含めない
+- ダイエット・食事・体重管理・食事指導に関係ない記事は除外する
+- URLが取得できない記事は除外する
+- 閾値（${threshold}いいね）以上と推定される記事のみ含める
+- JSONのみ返し、他のテキストは一切含めない`;
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -200,6 +223,10 @@ cta_content（LINE誘導文やCTAの内容）, source_url
     let savedCount = 0;
     for (const article of articles) {
       const likesEstimate = parseInt(article.likes_estimate) || 0;
+      // Skip non-note.com URLs
+      if (!article.source_url || !article.source_url.includes('note.com')) {
+        continue;
+      }
       if (likesEstimate >= parseInt(threshold)) {
         await pool.query(
           `INSERT INTO refit_knowledge (article_title, likes_estimate, structure_pattern, keywords, cta_content, source_url)
@@ -239,16 +266,16 @@ app.post('/api/customers', async (req, res) => {
     const {
       nickname, age_group, job_lifestyle, diet_concerns,
       initial_status, current_status, personality, living_env,
-      refit_trigger, refit_post_numbers,
+      refit_trigger, refit_post_numbers, themes,
     } = req.body;
     const result = await pool.query(
       `INSERT INTO refit_customers (nickname, age_group, job_lifestyle, diet_concerns,
         initial_status, current_status, personality, living_env,
-        refit_trigger, refit_post_numbers)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        refit_trigger, refit_post_numbers, themes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [nickname, age_group, job_lifestyle, diet_concerns,
         initial_status, current_status, personality, living_env,
-        refit_trigger, refit_post_numbers || '']
+        refit_trigger, refit_post_numbers || '', themes || '']
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -261,16 +288,16 @@ app.put('/api/customers/:id', async (req, res) => {
     const {
       nickname, age_group, job_lifestyle, diet_concerns,
       initial_status, current_status, personality, living_env,
-      refit_trigger, refit_post_numbers,
+      refit_trigger, refit_post_numbers, themes,
     } = req.body;
     const result = await pool.query(
       `UPDATE refit_customers SET nickname=$1, age_group=$2, job_lifestyle=$3, diet_concerns=$4,
         initial_status=$5, current_status=$6, personality=$7, living_env=$8,
-        refit_trigger=$9, refit_post_numbers=$10
-       WHERE id=$11 RETURNING *`,
+        refit_trigger=$9, refit_post_numbers=$10, themes=$11
+       WHERE id=$12 RETURNING *`,
       [nickname, age_group, job_lifestyle, diet_concerns,
         initial_status, current_status, personality, living_env,
-        refit_trigger, refit_post_numbers || '', req.params.id]
+        refit_trigger, refit_post_numbers || '', themes || '', req.params.id]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -311,7 +338,7 @@ app.get('/api/articles', async (req, res) => {
 
 app.post('/api/articles/generate', async (req, res) => {
   try {
-    const { customer_id, additional_notes } = req.body;
+    const { customer_id, additional_notes, theme } = req.body;
 
     // Get customer
     const custResult = await pool.query('SELECT * FROM refit_customers WHERE id = $1', [customer_id]);
@@ -321,11 +348,21 @@ app.post('/api/articles/generate', async (req, res) => {
     const customer = custResult.rows[0];
     const nextPostNumber = customer.post_count + 1;
 
-    // Check if ReFit should be mentioned
+    // Check if ReFit Online should be mentioned
     const refitNumbers = customer.refit_post_numbers
       ? customer.refit_post_numbers.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n))
       : [];
     const includeRefit = refitNumbers.includes(nextPostNumber);
+
+    // Parse customer themes for fallback
+    const themesMap = {};
+    if (customer.themes) {
+      customer.themes.split('\n').forEach(line => {
+        const match = line.match(/^(\d+)[：:](.+)/);
+        if (match) themesMap[parseInt(match[1])] = match[2].trim();
+      });
+    }
+    const effectiveTheme = theme || themesMap[nextPostNumber] || '';
 
     // Get knowledge for context
     const knowledgeResult = await pool.query(
@@ -340,10 +377,11 @@ app.post('/api/articles/generate', async (req, res) => {
 - 一人称は「私」
 - 顧客の性格・文体イメージに合わせた自然な文体
 - 1500〜2000文字程度
-- 見出し（##）を2〜3個
-- ReFit言及指示がある場合のみ、記事後半にさりげなく1回だけ触れる
-- ReFit言及なしの場合は純粋な体験談として書く
-- タイトルは最初の行に「# タイトル」形式
+- タイトルは「# タイトル」形式（H1）で出力
+- 見出しは「## **見出しテキスト**」形式（H2・太字）で2〜3個
+- Note貼り付け時にそのままMarkdown形式で反映されるよう、Markdown記法を厳守すること
+- ReFit Online言及指示がある場合のみ、記事後半にさりげなく1回だけ触れる
+- ReFit Online言及なしの場合は純粋な体験談として書く
 - 以下のナレッジを参考にバズりやすい構成にすること：
 ${knowledgeSummary || '（ナレッジなし）'}`;
 
@@ -358,9 +396,11 @@ ${knowledgeSummary || '（ナレッジなし）'}`;
 - 現在の状態: ${customer.current_status}
 - 性格・文体イメージ: ${customer.personality}
 - 生活環境: ${customer.living_env}
-- ReFitを知ったきっかけ: ${customer.refit_trigger}
+- ReFit Onlineを知ったきっかけ: ${customer.refit_trigger}
 
-【ReFit言及】${includeRefit ? 'この記事ではReFitにさりげなく1回だけ言及してください。' : 'この記事ではReFitには一切触れないでください。純粋な体験談として書いてください。'}
+【ReFit Online言及】${includeRefit ? 'この記事ではReFit Onlineにさりげなく1回だけ言及してください。' : 'この記事ではReFit Onlineには一切触れないでください。純粋な体験談として書いてください。'}
+
+${effectiveTheme ? `【今回のテーマ・フレームワーク】\n${effectiveTheme}` : ''}
 
 ${additional_notes ? `【追記・今回特に触れたいこと】\n${additional_notes}` : ''}
 

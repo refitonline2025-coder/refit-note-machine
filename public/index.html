@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ReFit Note量産マシン</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif; background: #f5f5f5; color: #333; }
@@ -108,9 +109,19 @@ label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-b
 .filter-btn { padding: 6px 14px; border-radius: 20px; border: 1.5px solid #ddd; background: #fff; font-size: 13px; cursor: pointer; transition: all .2s; }
 .filter-btn.active { border-color: #667eea; background: #667eea; color: #fff; }
 
-/* Article body in modal */
-.article-body { white-space: pre-wrap; font-size: 14px; line-height: 1.8; padding: 16px 0; }
+/* Article body in modal (Markdown rendered) */
+.article-body { font-size: 14px; line-height: 1.8; padding: 16px 0; }
+.article-body h1 { font-size: 22px; font-weight: 700; margin: 20px 0 10px; }
+.article-body h2 { font-size: 18px; font-weight: 700; margin: 16px 0 8px; }
+.article-body h3 { font-size: 16px; font-weight: 700; margin: 12px 0 6px; }
+.article-body p { margin: 8px 0; }
+.article-body ul, .article-body ol { margin: 8px 0; padding-left: 24px; }
+.article-body strong { font-weight: 700; }
 .copy-btn { position: sticky; top: 0; }
+
+/* Schedule info */
+.schedule-info { background: #f8f9fa; border-radius: 8px; padding: 12px; margin-bottom: 12px; font-size: 13px; line-height: 1.6; border-left: 4px solid #667eea; }
+.schedule-info strong { color: #444; }
 
 /* Toast */
 .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 24px; border-radius: 8px; font-size: 14px; z-index: 2000; opacity: 0; transition: opacity .3s; pointer-events: none; }
@@ -192,7 +203,12 @@ label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-b
       <h3>記事生成</h3>
       <div class="form-group mt-8">
         <label>顧客選択</label>
-        <select id="customer-select"><option value="">顧客を選択してください</option></select>
+        <select id="customer-select" onchange="updateSchedule()"><option value="">顧客を選択してください</option></select>
+      </div>
+      <div id="schedule-info" class="schedule-info" style="display:none;"></div>
+      <div class="form-group">
+        <label>テーマ・フレームワーク</label>
+        <input type="text" id="theme-input" placeholder="例：きっかけ編、食事改善編">
       </div>
       <div class="form-group">
         <label>追記（任意）：今回特に触れたいこと</label>
@@ -228,8 +244,9 @@ label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-b
     <div class="form-group"><label>現在の状態（成果）</label><textarea id="c-current" rows="2" placeholder="例：-8kg達成、ウエスト-10cm"></textarea></div>
     <div class="form-group"><label>性格・文体のイメージ</label><textarea id="c-personality" rows="2" placeholder="例：明るくてポジティブ、友達に話すような口調"></textarea></div>
     <div class="form-group"><label>生活環境（家族構成・勤務形態）</label><textarea id="c-living" rows="2" placeholder="例：夫と子供2人、在宅勤務"></textarea></div>
-    <div class="form-group"><label>ReFitを知ったきっかけ</label><textarea id="c-trigger" rows="2" placeholder="例：Instagramの広告で見て"></textarea></div>
-    <div class="form-group"><label>ReFit言及する記事番号（カンマ区切り）</label><input type="text" id="c-refit-numbers" placeholder="例：3,5,8"></div>
+    <div class="form-group"><label>ReFit Onlineを知ったきっかけ</label><textarea id="c-trigger" rows="2" placeholder="例：Instagramの広告で見て"></textarea></div>
+    <div class="form-group"><label>ReFit Online言及する記事番号（カンマ区切り）</label><input type="text" id="c-refit-numbers" placeholder="例：3,5,8"></div>
+    <div class="form-group"><label>各回のテーマ設定（1行1テーマ）</label><textarea id="c-themes" rows="4" placeholder="1:きっかけ編&#10;2:食事改善編&#10;3:ReFit Online紹介編"></textarea></div>
     <button class="btn btn-primary mt-8" onclick="saveCustomer()" style="width:100%;">保存</button>
   </div>
 </div>
@@ -249,6 +266,17 @@ label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-b
 <script>
 const API = '';
 let currentFilter = 'all';
+let customersData = [];
+let currentArticleRawBody = '';
+
+// --- Session Auth ---
+(function checkSession() {
+  if (localStorage.getItem('refit_auth') === 'true') {
+    document.getElementById('auth-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    loadAll();
+  }
+})();
 
 // --- Auth ---
 function authenticate() {
@@ -261,6 +289,7 @@ function authenticate() {
     .then(r => r.json())
     .then(data => {
       if (data.success) {
+        localStorage.setItem('refit_auth', 'true');
         document.getElementById('auth-screen').style.display = 'none';
         document.getElementById('app').style.display = 'block';
         loadAll();
@@ -383,7 +412,10 @@ function loadKnowledge() {
               ${k.source_url ? `<a href="${esc(k.source_url)}" target="_blank" class="knowledge-url">${esc(k.source_url)}</a>` : ''}
               <div class="text-muted">${formatDate(k.created_at)}</div>
             </div>
-            <button class="btn btn-danger btn-xs" onclick="deleteKnowledge(${k.id})">削除</button>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+              ${k.source_url ? `<button class="btn btn-primary btn-xs" data-url="${esc(k.source_url)}" onclick="window.open(this.dataset.url,'_blank')">記事を開く</button>` : ''}
+              <button class="btn btn-danger btn-xs" onclick="deleteKnowledge(${k.id})">削除</button>
+            </div>
           </div>
         </div>
       `).join('');
@@ -402,6 +434,7 @@ function loadCustomers() {
   fetch(API + '/api/customers')
     .then(r => r.json())
     .then(data => {
+      customersData = data;
       // List
       const el = document.getElementById('customer-list');
       if (data.length === 0) {
@@ -411,7 +444,7 @@ function loadCustomers() {
           <div class="customer-item">
             <div class="customer-info">
               <div class="customer-name">${esc(c.nickname)}</div>
-              <div class="customer-progress">${c.post_count}本生成済み | ReFit: ${esc(c.refit_post_numbers || '未設定')}本目</div>
+              <div class="customer-progress">${c.post_count}本生成済み | ReFit Online: ${esc(c.refit_post_numbers || '未設定')}本目</div>
             </div>
             <div style="display:flex;gap:4px;">
               <button class="btn btn-secondary btn-xs" onclick="editCustomer(${c.id})">編集</button>
@@ -422,9 +455,49 @@ function loadCustomers() {
       }
       // Select
       const sel = document.getElementById('customer-select');
+      const currentVal = sel.value;
       sel.innerHTML = '<option value="">顧客を選択してください</option>' +
         data.map(c => `<option value="${c.id}">${esc(c.nickname)} (${c.post_count}本済)</option>`).join('');
+      if (currentVal) sel.value = currentVal;
+      updateSchedule();
     });
+}
+
+function updateSchedule() {
+  const customerId = document.getElementById('customer-select').value;
+  const scheduleEl = document.getElementById('schedule-info');
+  const themeInput = document.getElementById('theme-input');
+  if (!customerId) {
+    scheduleEl.style.display = 'none';
+    themeInput.value = '';
+    return;
+  }
+  const c = customersData.find(x => x.id === parseInt(customerId));
+  if (!c) { scheduleEl.style.display = 'none'; return; }
+
+  const nextPost = c.post_count + 1;
+  const refitNumbers = c.refit_post_numbers
+    ? c.refit_post_numbers.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n))
+    : [];
+  const hasRefit = refitNumbers.includes(nextPost);
+
+  // Parse themes
+  const themesMap = {};
+  if (c.themes) {
+    c.themes.split('\n').forEach(line => {
+      const match = line.match(/^(\d+)[：:](.+)/);
+      if (match) themesMap[parseInt(match[1])] = match[2].trim();
+    });
+  }
+  const currentTheme = themesMap[nextPost] || '';
+
+  scheduleEl.innerHTML = `
+    <div><strong>次回配信:</strong> 第${nextPost}回目</div>
+    <div><strong>ReFit Online言及:</strong> ${hasRefit ? '<span style="color:#27ae60;font-weight:600;">あり</span>' : 'なし'}</div>
+    ${currentTheme ? `<div><strong>設定テーマ:</strong> ${esc(currentTheme)}</div>` : ''}
+  `;
+  scheduleEl.style.display = 'block';
+  themeInput.value = currentTheme;
 }
 
 function openCustomerModal(data) {
@@ -440,6 +513,7 @@ function openCustomerModal(data) {
   document.getElementById('c-living').value = data ? (data.living_env || '') : '';
   document.getElementById('c-trigger').value = data ? (data.refit_trigger || '') : '';
   document.getElementById('c-refit-numbers').value = data ? (data.refit_post_numbers || '') : '';
+  document.getElementById('c-themes').value = data ? (data.themes || '') : '';
   document.getElementById('customer-modal').classList.add('show');
 }
 
@@ -448,12 +522,8 @@ function closeCustomerModal() {
 }
 
 function editCustomer(id) {
-  fetch(API + '/api/customers')
-    .then(r => r.json())
-    .then(data => {
-      const c = data.find(x => x.id === id);
-      if (c) openCustomerModal(c);
-    });
+  const c = customersData.find(x => x.id === id);
+  if (c) openCustomerModal(c);
 }
 
 function saveCustomer() {
@@ -469,6 +539,7 @@ function saveCustomer() {
     living_env: document.getElementById('c-living').value,
     refit_trigger: document.getElementById('c-trigger').value,
     refit_post_numbers: document.getElementById('c-refit-numbers').value,
+    themes: document.getElementById('c-themes').value,
   };
   if (!body.nickname.trim()) { showToast('ニックネームを入力してください'); return; }
   const url = id ? API + '/api/customers/' + id : API + '/api/customers';
@@ -499,13 +570,14 @@ function generateArticle() {
   const customerId = document.getElementById('customer-select').value;
   if (!customerId) { showToast('顧客を選択してください'); return; }
   const notes = document.getElementById('additional-notes').value;
+  const theme = document.getElementById('theme-input').value;
   const btn = document.getElementById('generate-btn');
   btn.disabled = true;
   showLoading('記事を生成中... (30秒〜1分)');
   fetch(API + '/api/articles/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customer_id: parseInt(customerId), additional_notes: notes }),
+    body: JSON.stringify({ customer_id: parseInt(customerId), additional_notes: notes, theme: theme }),
   })
     .then(r => r.json())
     .then(data => {
@@ -543,7 +615,7 @@ function loadArticles(status) {
           <div class="article-meta">
             <span>${esc(a.nickname || '不明')}</span>
             <span class="badge ${a.status === 'approved' ? 'badge-approved' : 'badge-pending'}">${a.status === 'approved' ? '承認済み' : '承認待ち'}</span>
-            ${a.refit_included ? '<span class="badge badge-refit">ReFit言及</span>' : ''}
+            ${a.refit_included ? '<span class="badge badge-refit">ReFit Online言及</span>' : ''}
             <span>${formatDate(a.created_at)}</span>
           </div>
           <div class="article-actions">
@@ -569,8 +641,9 @@ function viewArticle(id) {
     .then(data => {
       const a = data.find(x => x.id === id);
       if (!a) return;
+      currentArticleRawBody = a.body;
       document.getElementById('article-modal-title').textContent = a.title;
-      document.getElementById('article-modal-body').textContent = a.body;
+      document.getElementById('article-modal-body').innerHTML = marked.parse(a.body);
       document.getElementById('article-modal').classList.add('show');
     });
 }
@@ -580,8 +653,7 @@ function closeArticleModal() {
 }
 
 function copyArticle() {
-  const body = document.getElementById('article-modal-body').textContent;
-  navigator.clipboard.writeText(body).then(() => showToast('コピーしました'));
+  navigator.clipboard.writeText(currentArticleRawBody).then(() => showToast('コピーしました'));
 }
 
 function approveArticle(id) {
