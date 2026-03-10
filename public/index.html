@@ -123,6 +123,33 @@ label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-b
 .schedule-info { background: #f8f9fa; border-radius: 8px; padding: 12px; margin-bottom: 12px; font-size: 13px; line-height: 1.6; border-left: 4px solid #667eea; }
 .schedule-info strong { color: #444; }
 
+/* Calendar */
+.cal-customer-tabs { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 8px; }
+.cal-tab { padding: 6px 14px; border-radius: 20px; border: 1.5px solid #ddd; background: #fff; font-size: 13px; cursor: pointer; transition: all .2s; white-space: nowrap; flex-shrink: 0; }
+.cal-tab.active { border-color: #667eea; background: #667eea; color: #fff; }
+.cal-nav { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 8px; }
+.cal-nav span { font-size: 15px; font-weight: 600; min-width: 120px; text-align: center; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+.cal-header { text-align: center; font-size: 11px; font-weight: 600; color: #888; padding: 4px 0; }
+.cal-cell { min-height: 48px; padding: 4px; border: 1px solid #f0f0f0; border-radius: 4px; cursor: pointer; transition: background .15s; position: relative; }
+.cal-cell:hover { background: #f8f9ff; }
+.cal-cell.other-month { opacity: .3; }
+.cal-cell.today { background: #f0f0ff; border-color: #667eea; }
+.cal-day-num { font-size: 12px; font-weight: 600; color: #555; }
+.cal-dots { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 2px; }
+.cal-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.cal-dot.pending { background: #f39c12; }
+.cal-dot.approved { background: #27ae60; }
+.cal-star { font-size: 10px; color: #f39c12; line-height: 1; }
+.cal-empty { text-align: center; color: #999; font-size: 13px; padding: 20px 0; }
+
+/* Calendar day modal articles */
+.cal-article-item { padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+.cal-article-item:last-child { border-bottom: none; }
+.cal-article-title { font-weight: 600; font-size: 14px; }
+.cal-article-meta { font-size: 12px; color: #888; margin-top: 4px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cal-article-actions { display: flex; gap: 4px; margin-top: 6px; }
+
 /* Toast */
 .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 24px; border-radius: 8px; font-size: 14px; z-index: 2000; opacity: 0; transition: opacity .3s; pointer-events: none; }
 .toast.show { opacity: 1; }
@@ -217,6 +244,27 @@ label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-b
       <button class="btn btn-primary" onclick="generateArticle()" id="generate-btn">生成する</button>
     </div>
 
+    <!-- Calendar Schedule -->
+    <div class="card">
+      <h3>配信スケジュール</h3>
+      <div class="cal-customer-tabs" id="cal-customer-tabs"></div>
+      <div class="cal-nav">
+        <button class="btn btn-secondary btn-xs" onclick="calPrevMonth()">&lt;</button>
+        <span id="cal-month-label"></span>
+        <button class="btn btn-secondary btn-xs" onclick="calNextMonth()">&gt;</button>
+      </div>
+      <div class="cal-grid">
+        <div class="cal-header">月</div>
+        <div class="cal-header">火</div>
+        <div class="cal-header">水</div>
+        <div class="cal-header">木</div>
+        <div class="cal-header">金</div>
+        <div class="cal-header">土</div>
+        <div class="cal-header">日</div>
+      </div>
+      <div class="cal-grid" id="cal-body"></div>
+    </div>
+
     <!-- Article List -->
     <div class="card">
       <h3>記事一覧</h3>
@@ -263,11 +311,29 @@ label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-b
   </div>
 </div>
 
+<!-- Calendar Day Modal -->
+<div class="modal-overlay" id="cal-day-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeCalDayModal()">&times;</button>
+    <h2 id="cal-day-title"></h2>
+    <div id="cal-day-articles"></div>
+  </div>
+</div>
+
 <script>
 const API = '';
 let currentFilter = 'all';
 let customersData = [];
+let allArticlesData = [];
 let currentArticleRawBody = '';
+
+// Calendar state
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth();
+let calCustomerId = null;
+
+// --- Warmup ---
+fetch(API + '/health').catch(() => {});
 
 // --- Session Auth ---
 (function checkSession() {
@@ -460,6 +526,8 @@ function loadCustomers() {
         data.map(c => `<option value="${c.id}">${esc(c.nickname)} (${c.post_count}本済)</option>`).join('');
       if (currentVal) sel.value = currentVal;
       updateSchedule();
+      // Calendar customer tabs
+      renderCalCustomerTabs();
     });
 }
 
@@ -602,6 +670,11 @@ function loadArticles(status) {
   fetch(API + '/api/articles' + query)
     .then(r => r.json())
     .then(data => {
+      // Store all articles for calendar (only when loading all)
+      if (filter === 'all') {
+        allArticlesData = data;
+        renderCalendar();
+      }
       const el = document.getElementById('article-list');
       if (data.length === 0) {
         el.innerHTML = '<p class="text-muted text-center">記事はまだありません</p>';
@@ -636,16 +709,25 @@ function filterArticles(status, btn) {
 }
 
 function viewArticle(id) {
+  const a = allArticlesData.find(x => x.id === id);
+  if (a) {
+    showArticleModal(a);
+    return;
+  }
   fetch(API + '/api/articles')
     .then(r => r.json())
     .then(data => {
-      const a = data.find(x => x.id === id);
-      if (!a) return;
-      currentArticleRawBody = a.body;
-      document.getElementById('article-modal-title').textContent = a.title;
-      document.getElementById('article-modal-body').innerHTML = marked.parse(a.body);
-      document.getElementById('article-modal').classList.add('show');
+      const found = data.find(x => x.id === id);
+      if (!found) return;
+      showArticleModal(found);
     });
+}
+
+function showArticleModal(a) {
+  currentArticleRawBody = a.body;
+  document.getElementById('article-modal-title').textContent = a.title;
+  document.getElementById('article-modal-body').innerHTML = marked.parse(a.body);
+  document.getElementById('article-modal').classList.add('show');
 }
 
 function closeArticleModal() {
@@ -668,6 +750,158 @@ function deleteArticle(id) {
   fetch(API + '/api/articles/' + id, { method: 'DELETE' })
     .then(r => r.json())
     .then(() => { showToast('削除しました'); loadArticles(); });
+}
+
+// --- Calendar ---
+function renderCalCustomerTabs() {
+  const el = document.getElementById('cal-customer-tabs');
+  if (customersData.length === 0) {
+    el.innerHTML = '';
+    return;
+  }
+  // If no customer selected yet, select the first one
+  if (!calCustomerId && customersData.length > 0) {
+    calCustomerId = customersData[0].id;
+  }
+  el.innerHTML = customersData.map(c =>
+    `<button class="cal-tab${c.id === calCustomerId ? ' active' : ''}" onclick="selectCalCustomer(${c.id})">${esc(c.nickname)}</button>`
+  ).join('');
+  renderCalendar();
+}
+
+function selectCalCustomer(id) {
+  calCustomerId = id;
+  document.querySelectorAll('.cal-tab').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  renderCalendar();
+}
+
+function calPrevMonth() {
+  calMonth--;
+  if (calMonth < 0) { calMonth = 11; calYear--; }
+  renderCalendar();
+}
+
+function calNextMonth() {
+  calMonth++;
+  if (calMonth > 11) { calMonth = 0; calYear++; }
+  renderCalendar();
+}
+
+function renderCalendar() {
+  const label = document.getElementById('cal-month-label');
+  const body = document.getElementById('cal-body');
+  label.textContent = `${calYear}年${calMonth + 1}月`;
+
+  // First day of month (0=Sun, convert to Mon-start: 0=Mon)
+  const firstDay = new Date(calYear, calMonth, 1).getDay();
+  const startOffset = (firstDay + 6) % 7; // Convert Sun=0 to Mon=0
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const daysInPrev = new Date(calYear, calMonth, 0).getDate();
+
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === calYear && today.getMonth() === calMonth;
+
+  // Filter articles for selected customer
+  const customerArticles = calCustomerId
+    ? allArticlesData.filter(a => a.customer_id === calCustomerId)
+    : [];
+
+  // Group articles by day
+  const articlesByDay = {};
+  customerArticles.forEach(a => {
+    const d = new Date(a.created_at);
+    if (d.getFullYear() === calYear && d.getMonth() === calMonth) {
+      const day = d.getDate();
+      if (!articlesByDay[day]) articlesByDay[day] = [];
+      articlesByDay[day].push(a);
+    }
+  });
+
+  let html = '';
+  // Previous month trailing days
+  for (let i = startOffset - 1; i >= 0; i--) {
+    const day = daysInPrev - i;
+    html += `<div class="cal-cell other-month"><div class="cal-day-num">${day}</div></div>`;
+  }
+
+  // Current month days
+  for (let day = 1; day <= daysInMonth; day++) {
+    const isToday = isCurrentMonth && day === today.getDate();
+    const dayArticles = articlesByDay[day] || [];
+    let dotsHtml = '';
+    if (dayArticles.length > 0) {
+      dotsHtml = '<div class="cal-dots">';
+      dayArticles.forEach(a => {
+        const dotClass = a.status === 'approved' ? 'approved' : 'pending';
+        dotsHtml += `<div class="cal-dot ${dotClass}"></div>`;
+        if (a.refit_included) dotsHtml += `<span class="cal-star">★</span>`;
+      });
+      dotsHtml += '</div>';
+    }
+    html += `<div class="cal-cell${isToday ? ' today' : ''}" onclick="openCalDay(${day})">
+      <div class="cal-day-num">${day}</div>${dotsHtml}
+    </div>`;
+  }
+
+  // Next month leading days
+  const totalCells = startOffset + daysInMonth;
+  const remainder = totalCells % 7;
+  if (remainder > 0) {
+    for (let i = 1; i <= 7 - remainder; i++) {
+      html += `<div class="cal-cell other-month"><div class="cal-day-num">${i}</div></div>`;
+    }
+  }
+
+  body.innerHTML = html;
+}
+
+function openCalDay(day) {
+  const customerArticles = calCustomerId
+    ? allArticlesData.filter(a => a.customer_id === calCustomerId)
+    : [];
+  const dayArticles = customerArticles.filter(a => {
+    const d = new Date(a.created_at);
+    return d.getFullYear() === calYear && d.getMonth() === calMonth && d.getDate() === day;
+  });
+
+  document.getElementById('cal-day-title').textContent = `${calYear}年${calMonth + 1}月${day}日`;
+  const el = document.getElementById('cal-day-articles');
+
+  if (dayArticles.length === 0) {
+    el.innerHTML = '<p class="text-muted text-center mt-8">この日の記事はありません</p>';
+  } else {
+    el.innerHTML = dayArticles.map(a => `
+      <div class="cal-article-item">
+        <div class="cal-article-title">${esc(a.title)}</div>
+        <div class="cal-article-meta">
+          <span class="badge ${a.status === 'approved' ? 'badge-approved' : 'badge-pending'}">${a.status === 'approved' ? '承認済み' : '承認待ち'}</span>
+          ${a.refit_included ? '<span class="badge badge-refit">ReFit Online言及</span>' : ''}
+        </div>
+        <div class="cal-article-actions">
+          <button class="btn btn-secondary btn-xs" onclick="closeCalDayModal();viewArticle(${a.id})">全文表示</button>
+          ${a.status !== 'approved' ? `<button class="btn btn-success btn-xs" onclick="calApproveArticle(${a.id})">承認</button>` : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('cal-day-modal').classList.add('show');
+}
+
+function closeCalDayModal() {
+  document.getElementById('cal-day-modal').classList.remove('show');
+}
+
+function calApproveArticle(id) {
+  if (!confirm('この記事を承認しますか？')) return;
+  fetch(API + '/api/articles/' + id + '/approve', { method: 'PUT' })
+    .then(r => r.json())
+    .then(() => {
+      showToast('承認しました');
+      closeCalDayModal();
+      loadArticles();
+    });
 }
 
 // --- Utility ---

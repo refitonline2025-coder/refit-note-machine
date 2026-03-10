@@ -87,6 +87,11 @@ async function initDB() {
   console.log('Database initialized');
 }
 
+// --- Health ---
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 // --- Auth ---
 app.post('/api/auth', (req, res) => {
   const { password } = req.body;
@@ -139,21 +144,13 @@ app.delete('/api/knowledge/:id', async (req, res) => {
   }
 });
 
-// --- Research ---
-app.post('/api/research', async (req, res) => {
-  try {
-    const thresholdResult = await pool.query("SELECT value FROM refit_settings WHERE key = 'like_threshold'");
-    const threshold = thresholdResult.rows[0]?.value || '100';
-
-    const systemPrompt = `あなたはNoteのダイエット・食事系記事のリサーチ専門家です。
+// --- Research (2-batch split for rate limit) ---
+async function searchBatch(keywords, threshold) {
+  const systemPrompt = `あなたはNoteのダイエット・食事系記事のリサーチ専門家です。
 WebSearchを使い、以下のキーワードで必ずNote.com内の記事を検索してください。
 
-検索キーワード（全て試すこと）：
-- site:note.com ダイエット 体験談
-- site:note.com 食事制限 30代 女性
-- site:note.com 食事管理 痩せた
-- site:note.com オンライン食事指導
-- site:note.com ダイエット 成功 主婦
+検索キーワード：
+${keywords.map(k => '- ' + k).join('\n')}
 
 各記事について以下をJSON配列形式で返してください：
 [{
@@ -173,60 +170,72 @@ WebSearchを使い、以下のキーワードで必ずNote.com内の記事を検
 - 閾値（${threshold}いいね）以上と推定される記事のみ含める
 - JSONのみ返し、他のテキストは一切含めない`;
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      system: systemPrompt,
-      tools: [{
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: 10,
-      }],
-      messages: [
-        {
-          role: 'user',
-          content: 'Noteのダイエット・食事系の人気記事をリサーチして、JSON形式で結果を返してください。',
-        },
-      ],
-    });
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4000,
+    system: systemPrompt,
+    tools: [{
+      type: 'web_search_20250305',
+      name: 'web_search',
+      max_uses: 5,
+    }],
+    messages: [
+      {
+        role: 'user',
+        content: 'Noteのダイエット・食事系の人気記事をリサーチして、JSON形式で結果を返してください。',
+      },
+    ],
+  });
 
-    // Extract text from response
-    let resultText = '';
-    for (const block of response.content) {
-      if (block.type === 'text') {
-        resultText += block.text;
-      }
+  let resultText = '';
+  for (const block of response.content) {
+    if (block.type === 'text') {
+      resultText += block.text;
     }
+  }
 
-    // Parse JSON from response
-    let articles = [];
-    try {
-      // Try to extract JSON array from response
-      const jsonMatch = resultText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        articles = JSON.parse(jsonMatch[0]);
-      } else {
-        // Try parsing as-is
-        articles = JSON.parse(resultText);
-      }
-    } catch (parseErr) {
-      console.error('JSON parse error:', parseErr.message);
-      console.error('Raw response:', resultText);
+  try {
+    const jsonMatch = resultText.match(/\[[\s\S]*\]/);
+    let parsed = [];
+    if (jsonMatch) {
+      parsed = JSON.parse(jsonMatch[0]);
+    } else {
+      parsed = JSON.parse(resultText);
+    }
+    if (!Array.isArray(parsed)) parsed = [parsed];
+    return parsed;
+  } catch (parseErr) {
+    console.error('JSON parse error in batch:', parseErr.message);
+    return [];
+  }
+}
+
+app.post('/api/research', async (req, res) => {
+  try {
+    const thresholdResult = await pool.query("SELECT value FROM refit_settings WHERE key = 'like_threshold'");
+    const threshold = thresholdResult.rows[0]?.value || '100';
+
+    const batch1 = ['site:note.com ダイエット 体験談', 'site:note.com 食事制限 30代 女性'];
+    const batch2 = ['site:note.com 食事管理 痩せた', 'site:note.com オンライン食事指導', 'site:note.com ダイエット 成功 主婦'];
+
+    const results1 = await searchBatch(batch1, threshold);
+    const results2 = await searchBatch(batch2, threshold);
+    const allArticles = [...results1, ...results2];
+
+    if (allArticles.length === 0) {
       return res.status(500).json({ error: 'リサーチ結果のパースに失敗しました。再度お試しください。' });
     }
 
-    if (!Array.isArray(articles)) {
-      articles = [articles];
-    }
-
-    // Save to knowledge DB
+    // Save to knowledge DB (deduplicate by source_url)
     let savedCount = 0;
-    for (const article of articles) {
+    const seenUrls = new Set();
+    for (const article of allArticles) {
       const likesEstimate = parseInt(article.likes_estimate) || 0;
-      // Skip non-note.com URLs
       if (!article.source_url || !article.source_url.includes('note.com')) {
         continue;
       }
+      if (seenUrls.has(article.source_url)) continue;
+      seenUrls.add(article.source_url);
       if (likesEstimate >= parseInt(threshold)) {
         await pool.query(
           `INSERT INTO refit_knowledge (article_title, likes_estimate, structure_pattern, keywords, cta_content, source_url)
@@ -244,7 +253,7 @@ WebSearchを使い、以下のキーワードで必ずNote.com内の記事を検
       }
     }
 
-    res.json({ success: true, savedCount, totalFound: articles.length });
+    res.json({ success: true, savedCount, totalFound: allArticles.length });
   } catch (err) {
     console.error('Research error:', err);
     res.status(500).json({ error: err.message });
